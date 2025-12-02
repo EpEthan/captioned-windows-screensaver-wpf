@@ -7,7 +7,7 @@
         mc:Ignorable="d"
         Title="MainWindow" Height="450" Width="800">
     <Grid>
-        <Image x:Name="PhotoDisplay" RenderTransformOrigin="0.5,0.5" HorizontalAlignment="Center" Height="103" VerticalAlignment="Center" Width="100" Stretch="UniformToFill" Grid.RowSpan="1" Grid.ColumnSpan="1">
+        <Image x:Name="PhotoDisplay" RenderTransformOrigin="0.5,0.5" HorizontalAlignment="Center" Height="103" VerticalAlignment="Center" Width="100" Stretch="Uniform" Grid.RowSpan="1" Grid.ColumnSpan="1">
             <Image.RenderTransform>
                 <ScaleTransform ScaleX="1.0" ScaleY="1.0" />
             </Image.RenderTransform>

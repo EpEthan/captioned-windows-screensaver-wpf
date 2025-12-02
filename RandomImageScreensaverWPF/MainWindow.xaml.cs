@@ -15,12 +15,14 @@ namespace RandomImageScreensaverWPF
         private const double IMG_START_SCALE = 1.05;
         private const double IMG_BASE_SCALE = 1.0;
         private const double MINIMUM_ANIMATION_DURATION = 2;
+        private const double POLL_IMAGES_INTERVAL_MS = 100;
 
 
         private readonly DispatcherTimer _timer = new DispatcherTimer();
         private readonly List<string> _imageFiles = new List<string>();
         private int _currentImageIndex = -1;
         private readonly Random _random = new Random();
+        private volatile int _runningJobCount = 0;
 
         // P/Invoke for embedding into preview window (Required for /p)
         [DllImport("user32.dll")]
@@ -51,12 +53,9 @@ namespace RandomImageScreensaverWPF
             LoadImages();
 
             // Setup the timer for image transitions
-            _timer.Interval = TimeSpan.FromSeconds(SettingsManager.ChangeIntervalSeconds);
+            _timer.Interval = TimeSpan.FromMilliseconds(POLL_IMAGES_INTERVAL_MS);
             _timer.Tick += Timer_Tick;
             _timer.Start();
-
-            // Display the first image immediately
-            DisplayNextImage();
         }
 
         private void HandleScreenSaverViewMode(IntPtr? previewHandle = null)
@@ -110,37 +109,50 @@ namespace RandomImageScreensaverWPF
                 SettingsManager.ImageDirectoryPath = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
             }
 
-            try
-            {
-                LoadImagesBackground(SettingsManager.ImageDirectoryPath);
-
-                if (_imageFiles.Count == 0)  // TODO what do we do if no images in root? wait for flag?
-                {
-                    MessageBox.Show($"No images found in: {SettingsManager.ImageDirectoryPath}", "Screen Saver Error", MessageBoxButton.OK, MessageBoxImage.Information);
-                    System.Windows.Application.Current.Shutdown();
-                }
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"An error occurred while loading images: {ex.Message}", "Screen Saver Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                System.Windows.Application.Current.Shutdown();
-            }
+            Task.Run(() => LoadImagesBackground(SettingsManager.ImageDirectoryPath));
         }
 
         private void LoadImagesBackground(string root)
         {
-            var images = Directory.EnumerateFiles(root, searchPattern: "*.*", SearchOption.TopDirectoryOnly)
-                .Where(f => _imageExtensions.Contains(System.IO.Path.GetExtension(f).ToLowerInvariant()));
-            _imageFiles.AddRange(images);
+            _runningJobCount++;
 
-            foreach (string directory in Directory.EnumerateDirectories(root))
+            try
             {
-                Task.Run(() => { LoadImagesBackground(directory); });
+                var images = Directory.EnumerateFiles(root, searchPattern: "*.*", SearchOption.TopDirectoryOnly)
+                    .Where(f => _imageExtensions.Contains(System.IO.Path.GetExtension(f).ToLowerInvariant()));
+                _imageFiles.AddRange(images);
+
+                foreach (string directory in Directory.EnumerateDirectories(root))
+                {
+                    Task.Run(() => { LoadImagesBackground(directory); });
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"An error occurred while loading images: {ex.Message}", "Screen Saver Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            } finally { 
+                _runningJobCount--; 
             }
         }
 
         private void Timer_Tick(object? sender, EventArgs e)
         {
+            if (_imageFiles.Count == 0)
+            {
+                if (_runningJobCount == 0)
+                {
+                    MessageBox.Show($"No images found in: {SettingsManager.ImageDirectoryPath}", "Screen Saver Error", MessageBoxButton.OK, MessageBoxImage.Information);
+                    Close();
+                }
+
+                return;
+            }
+
+            if (_timer.Interval.TotalSeconds != SettingsManager.ChangeIntervalSeconds)
+            {
+                _timer.Interval = TimeSpan.FromSeconds(SettingsManager.ChangeIntervalSeconds);
+            }
+
             DisplayNextImage();
         }
 
