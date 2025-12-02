@@ -89,7 +89,7 @@ namespace RandomImageScreensaverWPF
                 this.Cursor = Cursors.None;
                 this.Loaded += MainWindow_Loaded;
                 this.Closing += MainWindow_Closing;
-                this.KeyDown += OnKeyDown;
+                this.KeyDown += MainWindow_OnKeyDown;
                 this.MouseDown += (s, e) => System.Windows.Application.Current.Shutdown();
             }
         }
@@ -103,6 +103,26 @@ namespace RandomImageScreensaverWPF
         private void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
         {
             _timer.Stop();
+        }
+
+        private void MainWindow_OnKeyDown(object? sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Right)
+            {
+                _timer.Stop();
+                DisplayNextImage();
+                _timer.Start();
+                return;
+            }
+            else if (e.Key == Key.Left)
+            {
+                _timer.Stop();
+                DisplayPreviousImage();
+                _timer.Start();
+                return;
+            }
+
+            System.Windows.Application.Current.Shutdown();
         }
 
         private void Timer_Tick(object? sender, EventArgs e)
@@ -206,7 +226,7 @@ namespace RandomImageScreensaverWPF
             storyboard.Begin();
         }
 
-        private Timeline CreateScaleAnimation()
+        private static DoubleAnimation CreateScaleAnimation()
         {
             double duration = Math.Max(MINIMUM_ANIMATION_DURATION, SettingsManager.ChangeIntervalSeconds);
 
@@ -214,25 +234,6 @@ namespace RandomImageScreensaverWPF
             {
                 EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
             };
-        }
-
-        private void OnKeyDown(object? sender, KeyEventArgs e)
-        {
-            if (e.Key == Key.Right)
-            {
-                _timer.Stop();
-                DisplayNextImage();
-                _timer.Start();
-                return;
-            } else if (e.Key == Key.Left) 
-            {
-                _timer.Stop();
-                DisplayPreviousImage();
-                _timer.Start();
-                return;
-            }
-
-            System.Windows.Application.Current.Shutdown();
         }
     }
 }
