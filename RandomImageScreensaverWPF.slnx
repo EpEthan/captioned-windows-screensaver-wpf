@@ -1,0 +1,8 @@
+<Solution>
+  <Configurations>
+    <BuildType Name="Config Debug" />
+    <BuildType Name="Debug" />
+    <BuildType Name="Release" />
+  </Configurations>
+  <Project Path="RandomImageScreensaverWPF/RandomImageScreensaverWPF.csproj" />
+</Solution>
