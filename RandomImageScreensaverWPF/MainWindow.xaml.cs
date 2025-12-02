@@ -139,7 +139,7 @@ namespace RandomImageScreensaverWPF
         {
             if (_imageFiles.Count == 0)
             {
-                if (_runningJobCount == 0)
+                if (_runningJobCount == 0 && System.Windows.Application.Current != null)
                 {
                     MessageBox.Show($"No images found in: {SettingsManager.ImageDirectoryPath}", "Screen Saver Error", MessageBoxButton.OK, MessageBoxImage.Information);
                     Close();
