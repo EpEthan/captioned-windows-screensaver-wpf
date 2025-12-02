@@ -2,6 +2,7 @@
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
@@ -11,7 +12,6 @@ namespace RandomImageScreensaverWPF
 {
     public partial class MainWindow : Window
     {
-        private static readonly string[] _imageExtensions = [".jpg", ".jpeg", ".png", ".bmp", ".gif"];
         private const double IMG_START_SCALE = 1.05;
         private const double IMG_BASE_SCALE = 1.0;
         private const double MINIMUM_ANIMATION_DURATION = 2;
@@ -19,10 +19,8 @@ namespace RandomImageScreensaverWPF
 
 
         private readonly DispatcherTimer _timer = new DispatcherTimer();
-        private readonly List<string> _imageFiles = new List<string>();
-        private int _currentImageIndex = -1;
-        private readonly Random _random = new Random();
-        private volatile int _runningJobCount = 0;
+        private readonly ImageQueue _queue;
+        private readonly LruCache<string, BitmapImage> _imageCache = new(capacity: 10);
 
         // P/Invoke for embedding into preview window (Required for /p)
         [DllImport("user32.dll")]
@@ -50,7 +48,13 @@ namespace RandomImageScreensaverWPF
 
             HandleScreenSaverViewMode(previewHandle);
 
-            LoadImages();
+            if (!Directory.Exists(SettingsManager.ImageDirectoryPath))
+            {
+                MessageBox.Show($"Image directory not found: {SettingsManager.ImageDirectoryPath}\n\nFalling back to My Pictures.", "Screen Saver Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                SettingsManager.ImageDirectoryPath = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
+            }
+
+            _queue = ImageQueue.LoadFromDirectoryAsync(SettingsManager.ImageDirectoryPath);
 
             // Setup the timer for image transitions
             _timer.Interval = TimeSpan.FromMilliseconds(POLL_IMAGES_INTERVAL_MS);
@@ -58,7 +62,7 @@ namespace RandomImageScreensaverWPF
             _timer.Start();
         }
 
-        private void HandleScreenSaverViewMode(IntPtr? previewHandle = null)
+        private void HandleScreenSaverViewMode(IntPtr? previewHandle = null, bool isDebug = false)
         {
             this.Background = Brushes.Black;
 
@@ -81,10 +85,10 @@ namespace RandomImageScreensaverWPF
                 this.WindowStyle = WindowStyle.None;
                 this.WindowState = WindowState.Maximized;
                 this.ShowInTaskbar = false;
-                this.Cursor = System.Windows.Input.Cursors.None;
+                this.Cursor = Cursors.None;
                 this.Loaded += MainWindow_Loaded;
                 this.Closing += MainWindow_Closing;
-                this.KeyDown += (s, e) => System.Windows.Application.Current.Shutdown();
+                this.KeyDown += OnKeyDown;
                 this.MouseDown += (s, e) => System.Windows.Application.Current.Shutdown();
             }
         }
@@ -100,49 +104,14 @@ namespace RandomImageScreensaverWPF
             _timer.Stop();
         }
 
-        private void LoadImages()
-        {
-            _imageFiles.Clear();
-            if (!Directory.Exists(SettingsManager.ImageDirectoryPath))
-            {
-                MessageBox.Show($"Image directory not found: {SettingsManager.ImageDirectoryPath}\n\nFalling back to My Pictures.", "Screen Saver Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                SettingsManager.ImageDirectoryPath = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
-            }
-
-            Task.Run(() => LoadImagesBackground(SettingsManager.ImageDirectoryPath));
-        }
-
-        private void LoadImagesBackground(string root)
-        {
-            _runningJobCount++;
-
-            try
-            {
-                var images = Directory.EnumerateFiles(root, searchPattern: "*.*", SearchOption.TopDirectoryOnly)
-                    .Where(f => _imageExtensions.Contains(System.IO.Path.GetExtension(f).ToLowerInvariant()));
-                _imageFiles.AddRange(images);
-
-                foreach (string directory in Directory.EnumerateDirectories(root))
-                {
-                    Task.Run(() => { LoadImagesBackground(directory); });
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"An error occurred while loading images: {ex.Message}", "Screen Saver Error", MessageBoxButton.OK, MessageBoxImage.Error);
-            } finally { 
-                _runningJobCount--; 
-            }
-        }
-
         private void Timer_Tick(object? sender, EventArgs e)
         {
-            if (_imageFiles.Count == 0)
+            if (_queue.IsEmpty)
             {
-                if (_runningJobCount == 0 && System.Windows.Application.Current != null)
+                if (_queue.IsScanning || System.Windows.Application.Current != null)
                 {
                     MessageBox.Show($"No images found in: {SettingsManager.ImageDirectoryPath}", "Screen Saver Error", MessageBoxButton.OK, MessageBoxImage.Information);
-                    Close();
+                    System.Windows.Application.Current.Shutdown();
                 }
 
                 return;
@@ -158,17 +127,27 @@ namespace RandomImageScreensaverWPF
 
         private void DisplayNextImage()
         {
-            if (_imageFiles.Count == 0) return;
+            if (_queue.IsEmpty) return;
+            _queue.MoveNext();
+            DisplayCurrentImage();
+        }
 
-            _currentImageIndex = GetNewRandomImageIndex();
-            string imagePath = _imageFiles[_currentImageIndex];
+        private void DisplayPreviousImage()
+        {
+            _queue.MoveBack();
+            DisplayCurrentImage();
+        }
+
+        private void DisplayCurrentImage()
+        {
+            string? imagePath = _queue.Current();
+            if (imagePath == null) return;
 
             try
             {
                 // Load the image
                 var bitmap = LoadImage(imagePath);
-
-                PhotoDisplay.Source = bitmap;  // TODO
+                PhotoDisplay.Source = bitmap;
 
                 // Start the calm zoom-in animation
                 AnimateZoomIn();
@@ -177,31 +156,27 @@ namespace RandomImageScreensaverWPF
             {
                 Debug.WriteLine($"Failed to load image: {imagePath}. Error: {ex.Message}");
                 // Remove the failed image path and try the next one
-                _imageFiles.RemoveAt(_currentImageIndex);
-                _currentImageIndex = -1;
+                _queue.RemoveCurrent();
                 DisplayNextImage();
             }
         }
 
-        private int GetNewRandomImageIndex()
+        private BitmapImage LoadImage(string imagePath)
         {
-            int newIndex;
-            do
+            var bitmap = _imageCache.Get(imagePath);
+            if (bitmap != null)
             {
-                newIndex = _random.Next(_imageFiles.Count);
-            } while (newIndex == _currentImageIndex && _imageFiles.Count > 1);
+                return bitmap;
+            }
 
-            return newIndex;
-        }
-
-        private static BitmapImage LoadImage(string imagePath)
-        {
-            var bitmap = new BitmapImage();
+            bitmap = new BitmapImage();
             bitmap.BeginInit();
             bitmap.UriSource = new Uri(imagePath);
             bitmap.CacheOption = BitmapCacheOption.OnLoad;
             bitmap.EndInit();
+            bitmap.Freeze();
 
+            _imageCache.Put(imagePath, bitmap);
             return bitmap;
         }
 
@@ -238,6 +213,25 @@ namespace RandomImageScreensaverWPF
             {
                 EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
             };
+        }
+
+        private void OnKeyDown(object? sender, KeyEventArgs e)
+        {
+            if (e.Key == Key.Right)
+            {
+                _timer.Stop();
+                DisplayNextImage();
+                _timer.Start();
+                return;
+            } else if (e.Key == Key.Left) 
+            {
+                _timer.Stop();
+                DisplayPreviousImage();
+                _timer.Start();
+                return;
+            }
+
+            System.Windows.Application.Current.Shutdown();
         }
     }
 }

@@ -15,10 +15,7 @@ This is an improved version of that screensaver!
 4. Pick the screensaver in the dialog (Control Panel > Change Screensaver)
 
 ## Checklist
-- [ ] go back and forward in photos feature
-  - back should go to the actual last photo we were in
-  - forward after hitting back should go to the actual photo we were in
-  - forward when not in "history" should get a new photo
+- [ ] load images before displaying them
 - [ ] text overlay: show image "source" (directory name)
   - animate in with picture
 
