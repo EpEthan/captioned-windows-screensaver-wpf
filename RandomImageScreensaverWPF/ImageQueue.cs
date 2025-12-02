@@ -114,14 +114,21 @@ namespace RandomImageScreensaverWPF
             return newIndex;
         }
 
-        public string? MoveBack() {
-            if (_current == null || _current.Previous == null)
+        public string MoveBack() {
+            if (_current == null) return MoveNext();
+
+            if (_current.Previous != null)
             {
-                return null;
+                _current = _current.Previous;
+                return _current.Value.Path;
             }
 
-            _current = _current.Previous;
-            return _current.Value.Path;
+            int nextImageIndex = GetNextRandomImageIndex();
+            var newNode = new ImageNode(nextImageIndex, _files[nextImageIndex]);
+
+            _history.AddFirst(newNode);
+            _current = _history.First;
+            return newNode.Path;
         }
 
         public string? Current()
