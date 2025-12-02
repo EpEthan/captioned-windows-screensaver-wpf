@@ -24,25 +24,27 @@ namespace RandomImageScreensaverWPF
         private readonly Random _random = new();
 
         private readonly List<string> _files;
+        private readonly int _maxHistoryEntries;
         private readonly LinkedList<ImageNode> _history = new();
         private LinkedListNode<ImageNode>? _current = null;
 
         private volatile int _runningJobCount = 0;
         public bool IsScanning => _runningJobCount > 0;
 
-        public ImageQueue(List<string>? files = null)
+        public ImageQueue(int maxHistory, List<string>? files = null)
         {
+            _maxHistoryEntries = Math.Max(1, maxHistory);
             _files = files is not null ? files : new([]);
         }
 
-        public static ImageQueue LoadFromDirectoryAsync(string directory)
+        public static ImageQueue LoadFromDirectoryAsync(string directory, int maxHistory)
         {
             if (!Directory.Exists(directory))
             {
                 throw new DirectoryNotFoundException(directory);
             }
 
-            ImageQueue queue = new();
+            ImageQueue queue = new(maxHistory);
             Task.Run(() => queue.ScanRecursivelyInBackground(SettingsManager.ImageDirectoryPath));
             return queue;
         }
@@ -100,6 +102,11 @@ namespace RandomImageScreensaverWPF
                 _current = _history.Last;
             }
 
+            if (_history.Count > _maxHistoryEntries)
+            {
+                _history.RemoveFirst();
+            }
+
             return newNode.Path;
         }
 
@@ -128,6 +135,12 @@ namespace RandomImageScreensaverWPF
 
             _history.AddFirst(newNode);
             _current = _history.First;
+
+            if (_history.Count > _maxHistoryEntries)
+            {
+                _history.RemoveLast();
+            }
+
             return newNode.Path;
         }
 

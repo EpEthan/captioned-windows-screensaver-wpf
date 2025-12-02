@@ -16,11 +16,12 @@ namespace RandomImageScreensaverWPF
         private const double IMG_BASE_SCALE = 1.0;
         private const double MINIMUM_ANIMATION_DURATION = 2;
         private const double POLL_IMAGES_INTERVAL_MS = 100;
+        private const int MAX_IMAGE_HISTORY = 100;
 
 
         private readonly DispatcherTimer _timer = new DispatcherTimer();
         private readonly ImageQueue _queue;
-        private readonly LruCache<string, BitmapImage> _imageCache = new(capacity: 10);
+        private readonly LruCache<string, BitmapImage> _imageCache = new(capacity: 20);  // 10 future and 10 past
 
         // P/Invoke for embedding into preview window (Required for /p)
         [DllImport("user32.dll")]
@@ -54,7 +55,7 @@ namespace RandomImageScreensaverWPF
                 SettingsManager.ImageDirectoryPath = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
             }
 
-            _queue = ImageQueue.LoadFromDirectoryAsync(SettingsManager.ImageDirectoryPath);
+            _queue = ImageQueue.LoadFromDirectoryAsync(SettingsManager.ImageDirectoryPath, MAX_IMAGE_HISTORY);
 
             // Setup the timer for image transitions
             _timer.Interval = TimeSpan.FromMilliseconds(POLL_IMAGES_INTERVAL_MS);
