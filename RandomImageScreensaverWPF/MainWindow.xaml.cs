@@ -16,12 +16,15 @@ namespace RandomImageScreensaverWPF
         private const double IMG_BASE_SCALE = 1.0;
         private const double MINIMUM_ANIMATION_DURATION = 2;
         private const double POLL_IMAGES_INTERVAL_MS = 100;
-        private const int MAX_IMAGE_HISTORY = 100;
+        private const int PRELOAD_IMAGE_COUNT_PER_DIRECTION = 5;  // TODO make configurable
+        private const int MAX_IMAGE_HISTORY = PRELOAD_IMAGE_COUNT_PER_DIRECTION * 5;
 
 
         private readonly DispatcherTimer _timer = new DispatcherTimer();
         private readonly ImageQueue _queue;
-        private readonly LruCache<string, BitmapImage> _imageCache = new(capacity: 20);  // 10 future and 10 past
+        // TODO use regular cache to optimize memory?
+        private readonly LruCache<string, BitmapImage> _imageCache = new(capacity: PRELOAD_IMAGE_COUNT_PER_DIRECTION * 2);  // future and past
+        private readonly int _targetImgDecodeWidth;
 
         // P/Invoke for embedding into preview window (Required for /p)
         [DllImport("user32.dll")]
@@ -48,6 +51,7 @@ namespace RandomImageScreensaverWPF
             InitializeComponent();
 
             HandleScreenSaverViewMode(previewHandle);
+            _targetImgDecodeWidth = (int)(SystemParameters.PrimaryScreenWidth * IMG_START_SCALE);
 
             if (!Directory.Exists(SettingsManager.ImageDirectoryPath))
             {
@@ -55,7 +59,7 @@ namespace RandomImageScreensaverWPF
                 SettingsManager.ImageDirectoryPath = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
             }
 
-            _queue = ImageQueue.LoadFromDirectoryAsync(SettingsManager.ImageDirectoryPath, MAX_IMAGE_HISTORY);
+            _queue = ImageQueue.LoadFromDirectoryAsync(SettingsManager.ImageDirectoryPath, MAX_IMAGE_HISTORY, PRELOAD_IMAGE_COUNT_PER_DIRECTION);
 
             // Setup the timer for image transitions
             _timer.Interval = TimeSpan.FromMilliseconds(POLL_IMAGES_INTERVAL_MS);
@@ -151,12 +155,22 @@ namespace RandomImageScreensaverWPF
             if (_queue.IsEmpty) return;
             _queue.MoveNext();
             DisplayCurrentImage();
+            
+            Task.Run(() => { 
+                var images = _queue.Peek(PRELOAD_IMAGE_COUNT_PER_DIRECTION); 
+                foreach (string path in images) LoadImage(path); 
+            });
         }
 
         private void DisplayPreviousImage()
         {
             _queue.MoveBack();
             DisplayCurrentImage();
+
+            Task.Run(() => {
+                var images = _queue.Peek(-1 * PRELOAD_IMAGE_COUNT_PER_DIRECTION);
+                foreach (string path in images) LoadImage(path);
+            });
         }
 
         private void DisplayCurrentImage()
@@ -168,6 +182,7 @@ namespace RandomImageScreensaverWPF
             {
                 // Load the image
                 var bitmap = LoadImage(imagePath);
+                PhotoDisplay.Source = null;  // explicitly tell WPF to release handle
                 PhotoDisplay.Source = bitmap;
 
                 // Start the calm zoom-in animation
@@ -191,9 +206,12 @@ namespace RandomImageScreensaverWPF
             }
 
             bitmap = new BitmapImage();
+
             bitmap.BeginInit();
+            bitmap.DecodePixelWidth = _targetImgDecodeWidth;
             bitmap.UriSource = new Uri(imagePath);
-            bitmap.CacheOption = BitmapCacheOption.OnLoad;
+            bitmap.CacheOption = BitmapCacheOption.None;
+            bitmap.CreateOptions = BitmapCreateOptions.IgnoreImageCache;
             bitmap.EndInit();
             bitmap.Freeze();
 

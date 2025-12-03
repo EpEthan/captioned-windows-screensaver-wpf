@@ -15,7 +15,6 @@ This is an improved version of that screensaver!
 4. Pick the screensaver in the dialog (Control Panel > Change Screensaver)
 
 ## Checklist
-- [ ] load images before displaying them
 - [ ] text overlay: show image "source" (directory name)
   - animate in with picture
 
