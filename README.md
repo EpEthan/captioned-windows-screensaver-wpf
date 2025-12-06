@@ -13,8 +13,3 @@ This is an improved version of that screensaver!
 2. Change the `.exe` file name to `.scr`
 3. Put the file in system32 (C:\Windows\System32)
 4. Pick the screensaver in the dialog (Control Panel > Change Screensaver)
-
-## Checklist
-- [ ] text overlay: show image "source" (directory name)
-  - animate in with picture
-

@@ -180,12 +180,11 @@ namespace RandomImageScreensaverWPF
 
             try
             {
-                // Load the image
                 var bitmap = LoadImage(imagePath);
                 PhotoDisplay.Source = null;  // explicitly tell WPF to release handle
                 PhotoDisplay.Source = bitmap;
 
-                // Start the calm zoom-in animation
+                AnimateTextChange(imagePath);
                 AnimateZoomIn();
             }
             catch (Exception ex)
@@ -252,6 +251,28 @@ namespace RandomImageScreensaverWPF
             {
                 EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
             };
+        }
+
+        private void AnimateTextChange(string imagePath)
+        {
+            if (ImageCaption == null) return;
+
+            string? relativePath = Path.GetDirectoryName(Path.GetRelativePath(SettingsManager.ImageDirectoryPath, imagePath));
+
+            var fadeOutAnimation = new DoubleAnimation(ImageCaption.Opacity, 0.0, TimeSpan.FromSeconds(0.3));
+            fadeOutAnimation.Completed += (s, e) =>
+            {
+                ImageCaption.Text = relativePath ?? "N/A";
+
+                var fadeInAnimation = new DoubleAnimation(0.0, 1.0, TimeSpan.FromSeconds(0.4))
+                {
+                    EasingFunction = new CubicEase { EasingMode = EasingMode.EaseInOut }
+                };
+
+                ImageCaption.BeginAnimation(OpacityProperty, fadeInAnimation);
+            };
+
+            ImageCaption.BeginAnimation(OpacityProperty, fadeOutAnimation);
         }
     }
 }
