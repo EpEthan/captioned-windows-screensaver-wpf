@@ -119,7 +119,7 @@ namespace RandomImageScreensaverWPF
 
         private int GetRandomImageIndex(int avoidIndex = -1)
         {
-            if (avoidIndex != -1)
+            if (avoidIndex == -1)
             {
                 avoidIndex = _current != null ? _current.Value.Index : -1;
             }
@@ -177,6 +177,7 @@ namespace RandomImageScreensaverWPF
             var toRemove = _current;
             _current = _current.Previous;
             _history.Remove(toRemove);
+            _files.Remove(toRemove.Value.Path);
         }
         
         private void FillMargins()
@@ -193,7 +194,8 @@ namespace RandomImageScreensaverWPF
             if (currentMarginSize >= _marginsSize) return;
 
             int diff = _marginsSize - currentMarginSize;
-            foreach (ImageNode node in GenerateNodes(diff)) 
+            int? lastIndex = isRightMargin ? _history.Last?.Value.Index : _history.First?.Value.Index;
+            foreach (ImageNode node in GenerateNodes(diff, lastIndex ?? -1)) 
             {
                 if (isRightMargin)
                 {
@@ -240,7 +242,7 @@ namespace RandomImageScreensaverWPF
             int lastIndex = avoidIndex;
             for (int i = 0; i < count; i++)
             {
-                int nextImageIndex = GetRandomImageIndex(lastIndex);
+                int nextImageIndex = GetRandomImageIndex(avoidIndex: lastIndex);
                 nodes[i] = new(nextImageIndex, _files[nextImageIndex]);
                 lastIndex = nextImageIndex;
             }
