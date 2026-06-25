@@ -131,9 +131,13 @@ namespace RandomImageScreensaverWPF
 
         private void Timer_Tick(object? sender, EventArgs e)
         {
+            Debug.WriteLine("Displaying next image");
+
             if (_queue.IsEmpty)
             {
-                if (_queue.IsScanning || System.Windows.Application.Current != null)
+                Debug.WriteLine("No images found");
+
+                if (!_queue.IsScanning)
                 {
                     MessageBox.Show($"No images found in: {SettingsManager.ImageDirectoryPath}", "Screen Saver Error", MessageBoxButton.OK, MessageBoxImage.Information);
                     System.Windows.Application.Current.Shutdown();

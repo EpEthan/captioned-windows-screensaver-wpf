@@ -1,4 +1,9 @@
-﻿using System.IO;
+﻿using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.IO;
+using System.Runtime.InteropServices.Swift;
+using System.Threading.Channels;
+using System.Timers;
 
 namespace RandomImageScreensaverWPF
 {
@@ -19,19 +24,29 @@ namespace RandomImageScreensaverWPF
         private static readonly string[] _imageExtensions = [".jpg", ".jpeg", ".png", ".bmp", ".gif"];
         private readonly Random _random = new();
 
-        private readonly List<string> _files;
+        private readonly Channel<string> _directoryChannel;
+        private readonly ConcurrentBag<string> _concurrentImageStore;
+        private readonly System.Timers.Timer synchronizer;
+        private readonly List<string> _imageList;
+        private readonly Task[] _workers;
         private readonly int _maxHistoryEntries;
         private readonly int _marginsSize;
         private readonly LinkedList<ImageNode> _history = new();
         private LinkedListNode<ImageNode>? _current = null;
 
-        private volatile int _runningJobCount = 0;
-        public bool IsScanning => _runningJobCount > 0;
+        public bool IsScanning { get => synchronizer.Enabled; }
 
-        public ImageQueue(int maxHistory, List<string>? files = null, int marginsSize = 0)
+        private ImageQueue(int maxHistory, int marginsSize = 0)
         {
             _maxHistoryEntries = Math.Max(1, maxHistory);
-            _files = files is not null ? files : new([]);
+            _directoryChannel = Channel.CreateBounded<string>(100);
+            synchronizer = new(500);
+            synchronizer.Elapsed += SyncImageList;
+            synchronizer.AutoReset = true;
+
+            _concurrentImageStore = [];
+            _imageList = [];
+            _workers = new Task[3];
             
             marginsSize = Math.Max(0, marginsSize);
             _marginsSize = (_maxHistoryEntries - 2 * marginsSize) > 0 ? marginsSize : 0;
@@ -45,41 +60,114 @@ namespace RandomImageScreensaverWPF
             }
 
             ImageQueue queue = new(maxHistory, marginsSize: marginsSize);
-            Task.Run(() => queue.ScanRecursivelyInBackground(SettingsManager.ImageDirectoryPath));
+            queue._directoryChannel.Writer.TryWrite(directory);
+            queue.synchronizer.Start();
+
+            for (int i = 0; i < queue._workers.Length; i++)
+            {
+                int workerId = i + 1;
+                queue._workers[i] = Task.Run(() => queue.StartWorkAsync(workerId, directory));
+            }
+            
             return queue;
         }
 
-        private void ScanRecursivelyInBackground(string root)
+        private async void StartWorkAsync(int id, string root)
         {
-            _runningJobCount++;
+            Debug.WriteLine($"Worker {id} started.");
 
             try
             {
-                var images = Directory.EnumerateFiles(root, searchPattern: "*.*", SearchOption.TopDirectoryOnly)
-                    .Where(f => _imageExtensions.Contains(System.IO.Path.GetExtension(f).ToLowerInvariant()));
-                _files.AddRange(images);
-
-                foreach (string directory in Directory.EnumerateDirectories(root))
+                // ReadAllAsync natively blocks until an item arrives, or exits when Channel is Complete
+                await foreach (var job in _directoryChannel.Reader.ReadAllAsync())
                 {
-                    Task.Run(() => { ScanRecursivelyInBackground(directory); });
+                    Debug.WriteLine($"Worker {id} is processing: {job}");
+                    HandleDirectory(job);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+
+            Debug.WriteLine($"Worker {id} shut down.");
+        }
+
+        private async void HandleDirectory(string dir)
+        {
+            try
+            {
+                var images = Directory.EnumerateFiles(dir, searchPattern: "*.*", SearchOption.TopDirectoryOnly)
+                    .Where(f => _imageExtensions.Contains(System.IO.Path.GetExtension(f).ToLowerInvariant()));
+
+                foreach (var image in images)
+                {
+                    _concurrentImageStore.Add(image);
+                }
+
+                foreach (string directory in Directory.EnumerateDirectories(dir).Shuffle())
+                {
+                    await _directoryChannel.Writer.WriteAsync(directory);
                 }
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"An error occurred while loading images: {ex.Message}");
             }
-            finally
+        }
+
+        public bool IsEmpty 
+        { 
+            get 
+            { 
+                SyncImageList(); 
+                return _imageList.Count == 0;
+            } 
+        }
+
+        private void SyncImageList(object? sender, ElapsedEventArgs e)
+        {
+            Debug.WriteLine("Syncing image list");
+
+            int migrates = 0;
+            while (_concurrentImageStore.TryTake(out var result))
             {
-                _runningJobCount--;
+                if (result is not null)
+                {
+                    migrates++;
+                    _imageList.Add(result);
+                }
+            }
+            Debug.WriteLine($"Moved {migrates} images");
+
+            
+            if (_directoryChannel.Reader.Count == 0)
+            {
+                Debug.WriteLine("No more scanning left, halting workers");
+
+                _directoryChannel.Writer.TryComplete();
+
+                if (sender is System.Timers.Timer currentTimer)
+                {
+                    currentTimer.Stop();
+                    currentTimer.Dispose();
+                }
             }
         }
 
-        public bool IsEmpty => _files.Count == 0;
+        private void SyncImageList()
+        {
+            //_concurrentImageStore.TryTake(out var result);
+            //if (result is not null)
+            //{
+            //    _imageList.Add(result);
+            //}
+        }
 
-        
         public string MoveNext()
         {
-            if (_files.Count == 0)
+            SyncImageList();
+
+            if (IsEmpty)
             {
                 throw new FileNotFoundException();
             }
@@ -97,6 +185,8 @@ namespace RandomImageScreensaverWPF
 
         private ImageNode MoveOrGenerateNext()
         {
+            SyncImageList();
+
             if (_current != null && _current.Next != null)
             {
                 _current = _current.Next;
@@ -127,8 +217,8 @@ namespace RandomImageScreensaverWPF
             int newIndex;
             do
             {
-                newIndex = _random.Next(_files.Count);
-            } while (_files.Count > 1 && newIndex == avoidIndex);
+                newIndex = _random.Next(_imageList.Count);
+            } while (_imageList.Count > 1 && newIndex == avoidIndex);
 
             return newIndex;
         }
@@ -148,6 +238,8 @@ namespace RandomImageScreensaverWPF
 
         private ImageNode MoveOrGenerateBack()
         {
+            SyncImageList();
+
             if (_current == null) return MoveOrGenerateNext();
 
             if (_current.Previous != null)
@@ -177,7 +269,7 @@ namespace RandomImageScreensaverWPF
             var toRemove = _current;
             _current = _current.Previous;
             _history.Remove(toRemove);
-            _files.Remove(toRemove.Value.Path);
+            _imageList.Remove(toRemove.Value.Path);
         }
         
         private void FillMargins()
@@ -243,7 +335,7 @@ namespace RandomImageScreensaverWPF
             for (int i = 0; i < count; i++)
             {
                 int nextImageIndex = GetRandomImageIndex(avoidIndex: lastIndex);
-                nodes[i] = new(nextImageIndex, _files[nextImageIndex]);
+                nodes[i] = new(nextImageIndex, _imageList[nextImageIndex]);
                 lastIndex = nextImageIndex;
             }
 
