@@ -41,7 +41,7 @@ namespace RandomImageScreensaverWPF
         {
             _maxHistoryEntries = Math.Max(1, maxHistory);
             _directoryChannel = Channel.CreateBounded<string>(100);
-            _synchronizer = new(5000);
+            _synchronizer = new(500);
             _synchronizer.Elapsed += SyncImageList;
             _synchronizer.AutoReset = true;
 
