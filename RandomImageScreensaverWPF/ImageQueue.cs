@@ -1,7 +1,6 @@
-﻿using System.Collections.Concurrent;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.IO;
-using System.Runtime.InteropServices.Swift;
 using System.Threading.Channels;
 using System.Timers;
 
@@ -26,7 +25,7 @@ namespace RandomImageScreensaverWPF
 
         private readonly Channel<string> _directoryChannel;
         private readonly ConcurrentBag<string> _concurrentImageStore;
-        private readonly System.Timers.Timer synchronizer;
+        private readonly System.Timers.Timer _synchronizer;
         private readonly List<string> _imageList;
         private readonly Task[] _workers;
         private readonly int _maxHistoryEntries;
@@ -34,15 +33,17 @@ namespace RandomImageScreensaverWPF
         private readonly LinkedList<ImageNode> _history = new();
         private LinkedListNode<ImageNode>? _current = null;
 
-        public bool IsScanning { get => synchronizer.Enabled; }
+        public bool IsScanning { get => _synchronizer.Enabled; }
+        public bool IsEmpty { get => _imageList.Count == 0; }
+
 
         private ImageQueue(int maxHistory, int marginsSize = 0)
         {
             _maxHistoryEntries = Math.Max(1, maxHistory);
             _directoryChannel = Channel.CreateBounded<string>(100);
-            synchronizer = new(500);
-            synchronizer.Elapsed += SyncImageList;
-            synchronizer.AutoReset = true;
+            _synchronizer = new(5000);
+            _synchronizer.Elapsed += SyncImageList;
+            _synchronizer.AutoReset = true;
 
             _concurrentImageStore = [];
             _imageList = [];
@@ -61,7 +62,7 @@ namespace RandomImageScreensaverWPF
 
             ImageQueue queue = new(maxHistory, marginsSize: marginsSize);
             queue._directoryChannel.Writer.TryWrite(directory);
-            queue.synchronizer.Start();
+            queue._synchronizer.Start();
 
             for (int i = 0; i < queue._workers.Length; i++)
             {
@@ -92,6 +93,36 @@ namespace RandomImageScreensaverWPF
             Debug.WriteLine($"Worker {id} shut down.");
         }
 
+        private void SyncImageList(object? sender, ElapsedEventArgs e)
+        {
+            Debug.WriteLine("Syncing image list");
+
+            int migrates = 0;
+            while (_concurrentImageStore.TryTake(out var result))
+            {
+                if (result is not null)
+                {
+                    migrates++;
+                    _imageList.Add(result);
+                }
+            }
+            Debug.WriteLine($"Moved {migrates} images");
+
+
+            if (_directoryChannel.Reader.Count == 0)
+            {
+                Debug.WriteLine("No more scanning left, halting workers");
+
+                _directoryChannel.Writer.TryComplete();
+
+                if (sender is System.Timers.Timer currentTimer)
+                {
+                    currentTimer.Stop();
+                    currentTimer.Dispose();
+                }
+            }
+        }
+
         private async void HandleDirectory(string dir)
         {
             try
@@ -115,58 +146,8 @@ namespace RandomImageScreensaverWPF
             }
         }
 
-        public bool IsEmpty 
-        { 
-            get 
-            { 
-                SyncImageList(); 
-                return _imageList.Count == 0;
-            } 
-        }
-
-        private void SyncImageList(object? sender, ElapsedEventArgs e)
-        {
-            Debug.WriteLine("Syncing image list");
-
-            int migrates = 0;
-            while (_concurrentImageStore.TryTake(out var result))
-            {
-                if (result is not null)
-                {
-                    migrates++;
-                    _imageList.Add(result);
-                }
-            }
-            Debug.WriteLine($"Moved {migrates} images");
-
-            
-            if (_directoryChannel.Reader.Count == 0)
-            {
-                Debug.WriteLine("No more scanning left, halting workers");
-
-                _directoryChannel.Writer.TryComplete();
-
-                if (sender is System.Timers.Timer currentTimer)
-                {
-                    currentTimer.Stop();
-                    currentTimer.Dispose();
-                }
-            }
-        }
-
-        private void SyncImageList()
-        {
-            //_concurrentImageStore.TryTake(out var result);
-            //if (result is not null)
-            //{
-            //    _imageList.Add(result);
-            //}
-        }
-
         public string MoveNext()
         {
-            SyncImageList();
-
             if (IsEmpty)
             {
                 throw new FileNotFoundException();
@@ -185,8 +166,6 @@ namespace RandomImageScreensaverWPF
 
         private ImageNode MoveOrGenerateNext()
         {
-            SyncImageList();
-
             if (_current != null && _current.Next != null)
             {
                 _current = _current.Next;
@@ -238,8 +217,6 @@ namespace RandomImageScreensaverWPF
 
         private ImageNode MoveOrGenerateBack()
         {
-            SyncImageList();
-
             if (_current == null) return MoveOrGenerateNext();
 
             if (_current.Previous != null)
